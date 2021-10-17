@@ -173,6 +173,46 @@ __global__ void reduceUnroll8(int *in, int *out, const int size){
     }
 }
 
+__global__ void reduceUnrollWarp8(int *in, int *out, const int size){
+    int idx = threadIdx.x + blockIdx.x * blockDim.x * 8;
+    if(idx >= size){
+        return;
+    }
+    int tid = threadIdx.x;
+    int *data = in + blockIdx.x * blockDim.x * 8;
+    if(idx+blockDim.x*7 < size){
+        data[tid] += data[tid+blockDim.x];
+        data[tid] += data[tid+blockDim.x*2];
+        data[tid] += data[tid+blockDim.x*3];
+        data[tid] += data[tid+blockDim.x*4];
+        data[tid] += data[tid+blockDim.x*5];
+        data[tid] += data[tid+blockDim.x*6];
+        data[tid] += data[tid+blockDim.x*7];
+    }
+    __syncthreads();
+
+    for(int stride=blockDim.x/2; stride>32; stride>>=1){
+        if(tid < stride){
+            data[tid] += data[tid + stride];
+        }
+        __syncthreads();
+    }
+
+    if(tid < 32){
+        volatile int *vmem = data;
+        vmem[tid] += vmem[tid+32];
+        vmem[tid] += vmem[tid+16];
+        vmem[tid] += vmem[tid+8];
+        vmem[tid] += vmem[tid+4];
+        vmem[tid] += vmem[tid+2];
+        vmem[tid] += vmem[tid+1];
+    }
+
+    if(tid==0){
+        out[blockIdx.x] = data[0];
+    }
+}
+
 int main(int argc, char **argv){
     int dev = 0;
     cudaSetDevice(dev);
@@ -349,6 +389,26 @@ int main(int argc, char **argv){
         printf("Check sum fail!    ");
     }
     printf("GPU reduceUnroll8: <<<%d, %d>>>, elapsed time %f\n", grid.x/8, block.x, gpuEnd-gpuStart);
+
+    // kernel8: reduceUnrollWarp8
+    CHECK(cudaMemcpy(idata_d, idata_h, nByte, cudaMemcpyHostToDevice));
+    cudaDeviceSynchronize();
+    gpuStart = cpuSecond();
+    reduceUnrollWarp8<<<grid.x/8, block>>>(idata_d, odata_d, size);
+    cudaDeviceSynchronize();
+    gpuEnd = cpuSecond();
+    CHECK(cudaMemcpy(odata_h, odata_d, grid.x*sizeof(int), cudaMemcpyDeviceToHost));
+    gpuSum = 0;
+    for(int i=0; i<grid.x/8; ++i){
+        gpuSum += odata_h[i];
+    }
+    if(gpuSum == cpuSum){
+        printf("Check sum success!    ");
+    }
+    else{
+        printf("Check sum fail!    ");
+    }
+    printf("GPU reduceUnrollWarp8: <<<%d, %d>>>, elapsed time %f\n", grid.x/8, block.x, gpuEnd-gpuStart);
 
     CHECK(cudaFree(idata_d));
     CHECK(cudaFree(odata_d));
