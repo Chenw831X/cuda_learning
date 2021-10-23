@@ -3,6 +3,6 @@
 
 #include <Eigen/Eigen>
 
-void func(Eigen::VectorXd &a);
+void func(Eigen::MatrixXd &a);
 
 #endif // TEST_CUH
